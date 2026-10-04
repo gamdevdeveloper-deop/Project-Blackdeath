@@ -26,7 +26,7 @@ body{font-family:'VT323',monospace;color:var(--osd);user-select:none;-webkit-use
 .frame .br{bottom:22px;right:22px;border-left:none;border-top:none}
 #noise{position:absolute;inset:0;opacity:.06;background-repeat:repeat;background-size:160px 160px}
 #staticBurst{position:absolute;inset:0;opacity:0;background-repeat:repeat;background-size:120px 120px;transition:opacity .08s}
-#staticBurst.on{opacity:.4}
+#staticBurst.on{opacity:.35}
 #hud{position:absolute;inset:0;pointer-events:none;z-index:8;text-shadow:0 0 5px rgba(120,200,120,.25),0 1px 2px rgba(0,0,0,.8)}
 #rec{position:absolute;top:30px;left:40px;font-size:clamp(17px,2.8vw,24px);letter-spacing:.1em;color:var(--white)}
 #recDot{display:inline-block;width:.55em;height:.55em;border-radius:50%;background:#e33b2f;margin-right:.4em;box-shadow:0 0 8px #e33b2f;animation:blink 1.3s steps(2) infinite}
@@ -252,7 +252,18 @@ body.touch #touchUI{display:block}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 'use strict';
-/* PROJECT BLACKDEATH — v19: NPC ragdoll + kneel/surrender + attached hit marks */
+/* PROJECT BLACKDEATH — v20 FINAL POLISH: upgraded models + MP3-ready audio */
+
+/* ============================================================
+   MP3 HOOK — drop your MP3s in the same folder and put their
+   paths below. Any key with a path plays that file; empty
+   string = fall back to synthesized sound. e.g.
+   shot:"sounds/shot.mp3", reload:"sounds/reload.mp3", ...
+   ============================================================ */
+const SOUND_URLS={
+  shot:"", shotgun:"", rifle:"", reload:"", shellIn:"", doorOpen:"", doorClose:"",
+  flesh:"", kill:"", footstep:"", dry:"", ping:"", comms:""
+};
 
 const CELL=2,AW=38,AH=32,WALL_H=3.2,EYE=1.52;
 const DOOR_W=0.92,DOOR_H=2.1,OPEN_MAX=1.92;
@@ -435,6 +446,9 @@ const shellRed=new THREE.MeshLambertMaterial({color:0xa8281e});
 const brassMat=new THREE.MeshLambertMaterial({color:0xc9a24a});
 const gloveMat=new THREE.MeshLambertMaterial({color:0x22262c});
 const sleeveMat=new THREE.MeshLambertMaterial({color:0x2f362c});
+const cuffMat=new THREE.MeshLambertMaterial({color:0x1a1d16});
+const skinMat=new THREE.MeshLambertMaterial({color:0x8a7563});
+const hairMat=new THREE.MeshLambertMaterial({color:0x2a2320});
 const decalMat=new THREE.MeshBasicMaterial({color:0x111214,transparent:true,opacity:0.9,depthWrite:false});
 const bloodFloorMats=splatTex.map(function(t){return new THREE.MeshBasicMaterial({map:t,color:0x7a1212,transparent:true,opacity:0.8,depthWrite:false});});
 const bloodWallMats=dripTex.map(function(t){return new THREE.MeshBasicMaterial({map:t,color:0x6e1010,transparent:true,opacity:0.8,depthWrite:false,side:THREE.DoubleSide});});
@@ -721,10 +735,15 @@ function buildDummy(wx,wz,ry){
     const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),name==='leg'?mDark:mBody);
     m.position.set(x,y,z);m.castShadow=Q.shadow;
     grp.add(m);parts.push({m:m,def:def});}
-  const ring1=new THREE.Mesh(new THREE.CircleGeometry(0.14,18),targetWhite);
-  ring1.position.set(0,1.34,0.125);grp.add(ring1);
-  const ring2=new THREE.Mesh(new THREE.CircleGeometry(0.07,16),ringRed);
-  ring2.position.set(0,1.34,0.128);grp.add(ring2);
+  // polished details: stand base + pole, target rings, head band
+  const base=new THREE.Mesh(new THREE.CylinderGeometry(0.42,0.5,0.08,16),standMat);
+  base.position.y=0.04;base.castShadow=Q.shadow;grp.add(base);
+  const ring1=new THREE.Mesh(new THREE.CircleGeometry(0.16,20),targetWhite);
+  ring1.position.set(0,1.32,0.115);grp.add(ring1);
+  const ring2=new THREE.Mesh(new THREE.CircleGeometry(0.08,18),ringRed);
+  ring2.position.set(0,1.32,0.118);grp.add(ring2);
+  const band=new THREE.Mesh(new THREE.BoxGeometry(0.21,0.05,0.24),ringRed);
+  band.position.set(0,1.86,0);grp.add(band);
   arenaGroup.add(grp);
   const rec={grp:grp,parts:parts,mats:[mBody,mDark],hp:100,alive:true,flinch:0,
     bleedT:0,dripT:0,spurtT:0,deathPos:null};
@@ -735,22 +754,40 @@ const NPCS=[];
 const NPC_SKIN=[0x9a8877,0x8a7563,0x7a6a5a];
 const NPC_CLOTH=[0x4a5568,0x5a4a3a,0x3a4a4a,0x6a5a4a];
 const NPC_LEGS=[0x3a3f4a,0x2f3440,0x44403a];
+const NPC_HAIR=[0x2a2320,0x3a2f28,0x1a1614,0x5a4a3a];
 function buildNPC(wx,wz){
   const grp=new THREE.Group();
   const skin=new THREE.MeshLambertMaterial({color:NPC_SKIN[(Math.random()*NPC_SKIN.length)|0]});
   const cloth=new THREE.MeshLambertMaterial({color:NPC_CLOTH[(Math.random()*NPC_CLOTH.length)|0]});
   const legMat=new THREE.MeshLambertMaterial({color:NPC_LEGS[(Math.random()*NPC_LEGS.length)|0]});
+  const hair=new THREE.MeshLambertMaterial({color:NPC_HAIR[(Math.random()*NPC_HAIR.length)|0]});
+  const shoeMat=new THREE.MeshLambertMaterial({color:0x1a1a1c});
+  // torso + tie + badge
   const body=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.55,0.22),cloth);body.position.y=1.15;
+  const tie=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.4,0.02),new THREE.MeshLambertMaterial({color:0x6e2a2a}));
+  tie.position.set(0,1.15,0.12);
+  const badge=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.1,0.01),new THREE.MeshLambertMaterial({color:0xd8d8d8}));
+  badge.position.set(0.12,1.28,0.12);
+  // head + hair + eyes
   const head=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.24,0.22),skin);head.position.y=1.62;
+  const hairM=new THREE.Mesh(new THREE.BoxGeometry(0.23,0.08,0.23),hair);hairM.position.y=1.75;
+  const eyeL=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.03,0.01),gunDark);eyeL.position.set(-0.05,1.64,0.115);
+  const eyeR=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.03,0.01),gunDark);eyeR.position.set(0.05,1.64,0.115);
+  // legs + shoes
   const legL=new THREE.Mesh(new THREE.BoxGeometry(0.14,0.55,0.16),legMat);
   const legR=new THREE.Mesh(new THREE.BoxGeometry(0.14,0.55,0.16),legMat);
-  const hipL=new THREE.Group();hipL.position.set(-0.11,0.85,0);hipL.add(legL);legL.position.y=-0.27;
-  const hipR=new THREE.Group();hipR.position.set(0.11,0.85,0);hipR.add(legR);legR.position.y=-0.27;
+  const shoeL=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.08,0.24),shoeMat);shoeL.position.set(0,-0.52,0.03);
+  const shoeR=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.08,0.24),shoeMat);shoeR.position.set(0,-0.52,0.03);
+  const hipL=new THREE.Group();hipL.position.set(-0.11,0.85,0);hipL.add(legL,shoeL);legL.position.y=-0.27;
+  const hipR=new THREE.Group();hipR.position.set(0.11,0.85,0);hipR.add(legR,shoeR);legR.position.y=-0.27;
+  // arms
   const armL=new THREE.Mesh(new THREE.BoxGeometry(0.11,0.5,0.13),cloth);
   const armR=new THREE.Mesh(new THREE.BoxGeometry(0.11,0.5,0.13),cloth);
-  const shL=new THREE.Group();shL.position.set(-0.27,1.4,0);shL.add(armL);armL.position.y=-0.25;
-  const shR=new THREE.Group();shR.position.set(0.27,1.4,0);shR.add(armR);armR.position.y=-0.25;
-  grp.add(body,head,hipL,hipR,shL,shR);
+  const handL=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.12,0.11),skin);handL.position.y=-0.55;
+  const handR=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.12,0.11),skin);handR.position.y=-0.55;
+  const shL=new THREE.Group();shL.position.set(-0.27,1.4,0);shL.add(armL,handL);armL.position.y=-0.25;
+  const shR=new THREE.Group();shR.position.set(0.27,1.4,0);shR.add(armR,handR);armR.position.y=-0.25;
+  grp.add(body,tie,badge,head,hairM,eyeL,eyeR,hipL,hipR,shL,shR);
   grp.position.set(wx,0,wz);
   grp.traverse(function(o){if(o.isMesh)o.castShadow=Q.shadow;});
   scene.add(grp);
@@ -796,7 +833,6 @@ function onCommand(){
 function ragdollNPC(npc){
   npc.alive=false;
   npc.grp.updateMatrixWorld(true);
-  detachWounds(npc);
   for(const m of npc.parts){
     m.getWorldPosition(_wp);
     m.getWorldQuaternion(_wq);
@@ -822,6 +858,7 @@ function hitNPC(npc,mesh,point,dmg,head){
   AUDIO.flesh();
   if(head||npc.hp-dmg<=0){
     npc.hp=0;
+    detachWounds(npc);
     ragdollNPC(npc);
   }else{
     npc.hp-=dmg;
@@ -1149,6 +1186,17 @@ function setLimb(m,a,b){
   m.scale.z=len;
   _va.normalize();
   m.quaternion.setFromUnitVectors(_zAxis,_va);}
+/* polished hand: palm + 4 curled fingers + thumb */
+function buildHand(parent){
+  const hand=new THREE.Group();
+  vbox(hand,0.10,0.09,0.13,0,0,0,gloveMat);
+  for(let i=0;i<4;i++){
+    const fx=-0.036+i*0.024;
+    vbox(hand,0.021,0.07,0.05,fx,0.005,-0.055,gloveMat,0.35,0,0);
+    vbox(hand,0.019,0.05,0.04,fx,0.012,-0.095,gloveMat,0.75,0,0);}
+  vbox(hand,0.024,0.06,0.03,0.055,0.012,-0.03,gloveMat,0.2,0,0.5);
+  parent.add(hand);
+  return hand;}
 function buildArm(parent,shoulder,hand,bend){
   const dir=_vc.subVectors(hand,shoulder);
   const len=dir.length();
@@ -1157,7 +1205,7 @@ function buildArm(parent,shoulder,hand,bend){
   const fore=makeLimb(parent,0.058,sleeveMat);
   setLimb(upper,shoulder,elbow.clone());
   setLimb(fore,elbow,hand);
-  const cuff=new THREE.Mesh(new THREE.BoxGeometry(0.125,0.125,0.07),gloveMat);
+  const cuff=new THREE.Mesh(new THREE.BoxGeometry(0.13,0.13,0.08),cuffMat);
   cuff.position.copy(hand).addScaledVector(dir.normalize(),-0.05);
   cuff.quaternion.setFromUnitVectors(_zAxis,dir);
   parent.add(cuff);}
@@ -1165,11 +1213,9 @@ function makeDynamicArm(rig,shoulderPos){
   const shoulder=shoulderPos.clone();
   const upper=makeLimb(rig,0.075,sleeveMat);
   const fore=makeLimb(rig,0.058,sleeveMat);
-  const cuff=new THREE.Mesh(new THREE.BoxGeometry(0.125,0.125,0.07),gloveMat);rig.add(cuff);
-  const hand=new THREE.Group();rig.add(hand);
-  vbox(hand,0.10,0.09,0.14,0,0,0,gloveMat);
-  for(let i=0;i<3;i++)vbox(hand,0.024,0.08,0.05,0.05,0.01,-0.02,gloveMat,0,0,0.2);
-  vbox(hand,0.07,0.026,0.034,0.03,0.045,-0.04,gloveMat);
+  const cuff=new THREE.Mesh(new THREE.BoxGeometry(0.13,0.13,0.08),cuffMat);rig.add(cuff);
+  const hand=buildHand(rig);
+  rig.add(hand);
   return{shoulder:shoulder,upper:upper,fore:fore,cuff:cuff,hand:hand};}
 function updateDynArm(arm,handPos,bend){
   _vc.subVectors(handPos,arm.shoulder);
@@ -1200,36 +1246,32 @@ function makeFlashPlane(scale){
       blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.DoubleSide}));
   return m;}
 
+/* ---- polished M16A1 ---- */
 const rigR=new THREE.Group();camera.add(rigR);
 const gRifle=new THREE.Group();rigR.add(gRifle);
 const muzzleAnchorR=new THREE.Object3D();muzzleAnchorR.position.set(0,0.02,-0.90);
 gRifle.add(muzzleAnchorR);
-vbox(gRifle,0.022,0.022,0.55,0,0.02,-0.62,gunSlide);
-vbox(gRifle,0.03,0.03,0.06,0,0.02,-0.90,gunDark);
-vbox(gRifle,0.012,0.05,0.02,0,0.065,-0.86,gunDark);
-vbox(gRifle,0.05,0.055,0.32,0,0.0,-0.28,rifleOlive);
-vbox(gRifle,0.055,0.09,0.34,0,0.0,0.06,gunSlide);
-vbox(gRifle,0.03,0.045,0.16,0,0.075,0.10,gunSlide);
-vbox(gRifle,0.012,0.02,0.02,0,0.105,0.16,gunDark);
+vbox(gRifle,0.022,0.022,0.55,0,0.02,-0.62,gunSlide);          // barrel
+vbox(gRifle,0.03,0.03,0.06,0,0.02,-0.90,gunDark);            // muzzle
+vbox(gRifle,0.014,0.05,0.02,0,0.065,-0.86,gunDark);          // front sight
+vbox(gRifle,0.05,0.055,0.32,0,0.0,-0.28,rifleOlive);         // handguard
+for(let i=0;i<3;i++)vbox(gRifle,0.052,0.057,0.02,0,0.0,-0.18-i*0.08,rifleOlive); // handguard ribs
+vbox(gRifle,0.055,0.09,0.34,0,0.0,0.06,gunSlide);            // receiver
+vbox(gRifle,0.03,0.045,0.16,0,0.075,0.10,gunSlide);          // carry handle
+vbox(gRifle,0.012,0.02,0.02,0,0.105,0.16,gunDark);           // aperture
+vbox(gRifle,0.04,0.11,0.06,0,-0.10,0.16,gunFrame,0.3);        // pistol grip
+vbox(gRifle,0.012,0.012,0.07,0,-0.075,0.10,gunFrame);        // trigger guard
+vbox(gRifle,0.038,0.09,0.05,0,-0.185,0.005,gunDark,0.35);    // magazine
+vbox(gRifle,0.05,0.08,0.28,0,-0.01,0.42,rifleOlive);         // stock
+vbox(gRifle,0.052,0.082,0.03,0,-0.01,0.57,gunDark);          // butt plate
 const boltGrp=new THREE.Group();gRifle.add(boltGrp);
-vbox(boltGrp,0.02,0.02,0.07,0.028,0.05,0.20,gunDark);
-vbox(gRifle,0.014,0.03,0.02,0.035,0.02,0.02,gunDark);
-vbox(gRifle,0.04,0.11,0.06,0,-0.10,0.16,gunFrame,0.3);
-vbox(gRifle,0.012,0.012,0.07,0,-0.075,0.10,gunFrame);
-vbox(gRifle,0.04,0.10,0.055,0,-0.10,0.02,gunDark,0.15);
-vbox(gRifle,0.038,0.09,0.05,0,-0.185,0.005,gunDark,0.35);
-vbox(gRifle,0.05,0.08,0.28,0,-0.01,0.42,rifleOlive);
-vbox(gRifle,0.052,0.082,0.03,0,-0.01,0.57,gunDark);
+vbox(boltGrp,0.02,0.02,0.07,0.028,0.05,0.20,gunDark);        // charging handle
+vbox(gRifle,0.02,0.022,0.06,0.03,-0.055,0.11,gloveMat,0.15); // trigger finger
+vbox(gRifle,0.095,0.095,0.11,0,-0.10,0.18,gloveMat,0.3);     // firing hand
 const rMagMesh=vbox(gRifle,0.04,0.15,0.06,0,-0.48,0.10,gunDark,0.15);
 rMagMesh.visible=false;
-vbox(gRifle,0.095,0.095,0.11,0,-0.10,0.18,gloveMat,0.3);
-for(let i=0;i<3;i++)vbox(gRifle,0.082,0.024,0.05,0,-0.125+i*0.026,0.12,gloveMat,0.3);
-vbox(gRifle,0.024,0.03,0.075,-0.05,-0.07,0.15,gloveMat,0.3);
-vbox(gRifle,0.02,0.022,0.06,0.032,-0.04,0.09,gloveMat,0.15);
-vbox(gRifle,0.08,0.08,0.09,0.075,-0.16,0.26,gloveMat,0.6,-0.2);
 buildArm(rigR,new THREE.Vector3(0.34,-0.85,0.26),new THREE.Vector3(0,-0.10,0.18),BEND_R);
 const rifleArm=makeDynamicArm(rigR,new THREE.Vector3(-0.36,-0.85,0.26));
-vbox(gRifle,0.02,0.022,0.06,0.03,-0.055,0.11,gloveMat,0.15);
 const mFlashR=makeFlashPlane(1.4);mFlashR.position.set(0,0.02,-0.94);gRifle.add(mFlashR);
 const RIF_REST=new THREE.Vector3(-0.005,-0.075,-0.28);
 const RIF_POUCH=new THREE.Vector3(-0.24,-0.55,0.34);
@@ -1240,37 +1282,33 @@ const RIF_KEYS=[
   [0.9,RIF_MAGWELL],[1.2,RIF_CHANDLE],[1.6,RIF_CHANDLE],[2.2,RIF_REST]];
 const hpR=new THREE.Vector3();
 
+/* ---- polished P226 ---- */
 const rig=new THREE.Group();camera.add(rig);
 const gGun=new THREE.Group();rig.add(gGun);
 const muzzleAnchor=new THREE.Object3D();muzzleAnchor.position.set(0,0.018,-0.21);
 gGun.add(muzzleAnchor);
 const pSlideGrp=new THREE.Group();gGun.add(pSlideGrp);
-vbox(pSlideGrp,0.058,0.082,0.31,0,0.012,-0.02,gunSlide);
-for(let i=0;i<4;i++)vbox(pSlideGrp,0.062,0.05,0.008,0,0.012,0.10+i*0.018,gunDark);
-for(let i=0;i<3;i++)vbox(pSlideGrp,0.062,0.05,0.008,0,0.012,-0.10-i*0.018,gunDark);
-vbox(pSlideGrp,0.03,0.02,0.05,0.02,0.045,0.02,gunDark);
-vbox(pSlideGrp,0.012,0.024,0.016,0,0.066,-0.155,gunDark);
-vbox(pSlideGrp,0.014,0.02,0.014,-0.014,0.063,0.11,gunDark);
-vbox(pSlideGrp,0.014,0.02,0.014,0.014,0.063,0.11,gunDark);
-vbox(pSlideGrp,0.02,0.02,0.02,0,0.0,-0.185,gunDark);
-vbox(gGun,0.052,0.042,0.20,0,-0.048,0.02,gunFrame);
-for(let i=0;i<3;i++)vbox(gGun,0.03,0.012,0.01,0,-0.062,-0.07-i*0.022,gunFrame);
-vbox(gGun,0.012,0.04,0.018,0,-0.078,0.005,gunDark);
-vbox(gGun,0.012,0.012,0.07,0,-0.098,-0.01,gunFrame);
-vbox(gGun,0.012,0.05,0.012,0,-0.078,-0.045,gunFrame);
-vbox(gGun,0.05,0.135,0.078,0,-0.135,0.10,gunFrame,0.32);
-vbox(gGun,0.052,0.03,0.08,0,-0.215,0.125,gunDark,0.32);
-vbox(gGun,0.046,0.05,0.03,0,-0.02,0.135,gunFrame);
+vbox(pSlideGrp,0.058,0.082,0.31,0,0.012,-0.02,gunSlide);      // slide
+for(let i=0;i<4;i++)vbox(pSlideGrp,0.062,0.05,0.008,0,0.012,0.10+i*0.018,gunDark); // rear serrations
+for(let i=0;i<3;i++)vbox(pSlideGrp,0.062,0.05,0.008,0,0.012,-0.10-i*0.018,gunDark); // front serrations
+vbox(pSlideGrp,0.03,0.02,0.05,0.02,0.045,0.02,gunDark);       // ejection port
+vbox(pSlideGrp,0.012,0.024,0.016,0,0.066,-0.155,gunDark);     // front sight
+vbox(pSlideGrp,0.014,0.02,0.014,-0.014,0.063,0.11,gunDark);   // rear sight L
+vbox(pSlideGrp,0.014,0.02,0.014,0.014,0.063,0.11,gunDark);    // rear sight R
+vbox(pSlideGrp,0.02,0.02,0.02,0,0.0,-0.185,gunDark);          // muzzle crown
+vbox(gGun,0.052,0.042,0.20,0,-0.048,0.02,gunFrame);           // frame
+for(let i=0;i<3;i++)vbox(gGun,0.03,0.012,0.01,0,-0.062,-0.07-i*0.022,gunFrame); // rail
+vbox(gGun,0.012,0.04,0.018,0,-0.078,0.005,gunDark);           // trigger
+vbox(gGun,0.012,0.012,0.07,0,-0.098,-0.01,gunFrame);          // trigger guard
+vbox(gGun,0.012,0.05,0.012,0,-0.078,-0.045,gunFrame);         // guard front
+vbox(gGun,0.05,0.135,0.078,0,-0.135,0.10,gunFrame,0.32);      // grip
+vbox(gGun,0.052,0.03,0.08,0,-0.215,0.125,gunDark,0.32);       // mag baseplate
+vbox(gGun,0.046,0.05,0.03,0,-0.02,0.135,gunFrame);            // beavertail
 const pMagMesh=vbox(gGun,0.046,0.15,0.068,0,-0.5,0.30,gunDark,0.32);
 pMagMesh.visible=false;
-vbox(gGun,0.095,0.095,0.11,0,-0.13,0.115,gloveMat,0.32);
-for(let i=0;i<3;i++)vbox(gGun,0.082,0.024,0.05,0,-0.155+i*0.026,0.058,gloveMat,0.32);
-vbox(gGun,0.024,0.03,0.075,-0.05,-0.10,0.085,gloveMat,0.3);
-vbox(gGun,0.02,0.022,0.06,0.032,-0.068,0.01,gloveMat,0.1);
-vbox(gGun,0.08,0.08,0.09,0.075,-0.19,0.22,gloveMat,0.6,-0.2);
+const pHand=buildHand(gGun);pHand.position.set(0,-0.13,0.115);pHand.rotation.x=0.32;
 buildArm(rig,new THREE.Vector3(0.34,-0.85,0.28),new THREE.Vector3(0,-0.13,0.115),BEND_R);
 const pistolArm=makeDynamicArm(rig,new THREE.Vector3(-0.36,-0.85,0.28));
-vbox(gGun,0.02,0.022,0.06,0.032,-0.052,0.05,gloveMat,0.2);
 const mFlash=makeFlashPlane(1);mFlash.position.set(0,0.018,-0.26);gGun.add(mFlash);
 const PIST_REST=new THREE.Vector3(-0.005,-0.095,-0.035);
 const PIST_POUCH=new THREE.Vector3(-0.22,-0.5,0.3);
@@ -1281,29 +1319,29 @@ const PIST_KEYS=[
   [0.8,PIST_MAGWELL],[0.9,PIST_MAGWELL],[1.05,PIST_SLIDE],[1.3,PIST_SLIDE],[1.6,PIST_REST]];
 const hpP=new THREE.Vector3();
 
+/* ---- polished M590 ---- */
 const rigS=new THREE.Group();camera.add(rigS);rigS.visible=false;
 const gShot=new THREE.Group();rigS.add(gShot);
 const muzzleAnchorS=new THREE.Object3D();muzzleAnchorS.position.set(0,0.02,-0.62);
 gShot.add(muzzleAnchorS);
 const pumpGrp=new THREE.Group();gShot.add(pumpGrp);
-vbox(gShot,0.030,0.030,0.66,0,0.02,-0.26,shotgunMetal);
-vbox(gShot,0.028,0.028,0.54,0,-0.016,-0.22,shotgunMetal);
-vbox(gShot,0.062,0.095,0.27,0,0.0,0.10,shotgunMetal);
-vbox(gShot,0.014,0.022,0.014,0,0.052,-0.56,gunDark);
-vbox(gShot,0.05,0.02,0.02,0,0.05,0.02,gunDark);
-vbox(gShot,0.02,0.02,0.02,0,0.055,0.16,gunDark);
-vbox(gShot,0.048,0.13,0.075,0,-0.115,0.24,shotgunWood,0.38);
-vbox(gShot,0.058,0.11,0.34,0,-0.065,0.44,shotgunWood,0.16);
-vbox(gShot,0.055,0.03,0.09,0,-0.028,0.60,gunDark,0.16);
-vbox(pumpGrp,0.058,0.062,0.17,0,-0.012,-0.20,shotgunWood);
-vbox(pumpGrp,0.06,0.02,0.03,0,-0.05,-0.20,gunDark);
-vbox(gShot,0.095,0.095,0.11,0,-0.11,0.25,gloveMat,0.38);
-for(let i=0;i<3;i++)vbox(gShot,0.082,0.024,0.05,0,-0.135+i*0.026,0.19,gloveMat,0.38);
-vbox(gShot,0.024,0.03,0.075,-0.05,-0.08,0.22,gloveMat,0.35);
-vbox(gShot,0.02,0.022,0.06,0.032,-0.05,0.16,gloveMat,0.15);
-vbox(gShot,0.08,0.08,0.09,0.075,-0.17,0.36,gloveMat,0.6,-0.2);
+vbox(gShot,0.030,0.030,0.66,0,0.02,-0.26,shotgunMetal);       // barrel
+vbox(gShot,0.028,0.028,0.54,0,-0.016,-0.22,shotgunMetal);     // mag tube
+vbox(gShot,0.062,0.095,0.27,0,0.0,0.10,shotgunMetal);         // receiver
+vbox(gShot,0.014,0.022,0.014,0,0.052,-0.56,gunDark);          // front bead
+for(let i=0;i<3;i++)vbox(pumpGrp,0.06,0.064,0.02,0,-0.012,-0.14-i*0.04,shotgunWood); // pump ribs
+vbox(pumpGrp,0.058,0.062,0.17,0,-0.012,-0.20,shotgunWood);    // forend
+vbox(gShot,0.05,0.02,0.02,0,0.05,0.02,gunDark);               // safety
+vbox(gShot,0.02,0.02,0.02,0,0.055,0.16,gunDark);              // rear sight
+vbox(gShot,0.048,0.13,0.075,0,-0.115,0.24,shotgunWood,0.38);  // grip
+vbox(gShot,0.058,0.11,0.34,0,-0.065,0.44,shotgunWood,0.16);   // stock
+vbox(gShot,0.055,0.03,0.09,0,-0.028,0.60,gunDark,0.16);       // butt plate
+const sHand=buildHand(gShot);sHand.position.set(0,-0.11,0.25);sHand.rotation.x=0.38;
 buildArm(rigS,new THREE.Vector3(0.34,-0.85,0.26),new THREE.Vector3(0,-0.11,0.25),BEND_R);
 const shotArm=makeDynamicArm(rigS,new THREE.Vector3(-0.36,-0.85,0.26));
+const sgShellMesh=new THREE.Mesh(new THREE.CylinderGeometry(0.016,0.016,0.075,10),shellRed);
+sgShellMesh.visible=false;gShot.add(sgShellMesh);
+const mFlashS=makeFlashPlane(1.7);mFlashS.position.set(0,0.02,-0.66);gShot.add(mFlashS);
 const HP_FOREND=new THREE.Vector3(-0.005,-0.08,-0.20);
 const HP_POUCH=new THREE.Vector3(-0.24,-0.55,0.34);
 const HP_PORT=new THREE.Vector3(0.0,-0.16,0.14);
@@ -1334,9 +1372,6 @@ function shotgunCarrying(t,ws){
   const p=((t-leadIn)%per)/per;
   if(k===0)return p>=0.25&&p<0.8;
   return p>=0.45&&p<0.8;}
-const sgShellMesh=new THREE.Mesh(new THREE.CylinderGeometry(0.016,0.016,0.075,10),shellRed);
-sgShellMesh.visible=false;gShot.add(sgShellMesh);
-const mFlashS=makeFlashPlane(1.7);mFlashS.position.set(0,0.02,-0.66);gShot.add(mFlashS);
 
 const laserDot=new THREE.Sprite(new THREE.SpriteMaterial({map:laserTex,color:0xff3020,
   transparent:true,opacity:0.9,blending:THREE.AdditiveBlending,depthWrite:false}));
@@ -1569,7 +1604,7 @@ function rifleShot(now){
   mFlashR.scale.setScalar(0.8+Math.random()*0.6);
   muzzleAnchorR.getWorldPosition(muzzleLight.position);
   muzzleLight.intensity=9;
-  AUDIO.rifleShot();UI.crossKick();onGunshot();
+  AUDIO.shot('rifle');UI.crossKick();onGunshot();
   ejectBrass();spawnSmoke(2);
   const from=new THREE.Vector3();muzzleAnchorR.getWorldPosition(from);
   shootRay.setFromCamera({x:(Math.random()-.5)*0.022,y:(Math.random()-.5)*0.022},camera);
@@ -1591,7 +1626,7 @@ function pressShot(now){
     mFlash.scale.setScalar(0.8+Math.random()*0.6);
     muzzleAnchor.getWorldPosition(muzzleLight.position);
     muzzleLight.intensity=7;
-    AUDIO.shot();UI.crossKick();onGunshot();
+    AUDIO.shot('shot');UI.crossKick();onGunshot();
     ejectBrass();spawnSmoke(3);
     const from=new THREE.Vector3();muzzleAnchor.getWorldPosition(from);
     shootRay.setFromCamera({x:(Math.random()-.5)*0.014,y:(Math.random()-.5)*0.014},camera);
@@ -1611,7 +1646,7 @@ function pressShot(now){
     mFlashS.scale.setScalar(1+Math.random()*0.6);
     muzzleAnchorS.getWorldPosition(muzzleLight.position);
     muzzleLight.intensity=11;
-    AUDIO.boom();UI.crossKick();onGunshot();
+    AUDIO.shot('shotgun');UI.crossKick();onGunshot();
     ejectShell();spawnSmoke(5);
     ws.pump=0.62;
     AUDIO.pump(0.18);
@@ -1645,6 +1680,7 @@ function startReload(){
     ws.need=ws.max-ws.mag;
     ws.inserted=0;
     ws.rlDur=0.25+ws.need*0.42+0.65;}
+  AUDIO.reload();
   UI.reload(true);UI.empty(false);}
 function updateWeapon(dt,t){
   recoil*=Math.exp(-9*dt);
@@ -2096,7 +2132,7 @@ function speakLine(i){
   const v=VOICES[i];
   closeWheel();
   UI.subtitle(v.txt,v.cat);
-  AUDIO.radioClick();
+  AUDIO.comms();
   if(v.cat===1)onCommand();
   if('speechSynthesis' in window){
     try{
@@ -2138,9 +2174,30 @@ const VHS=(function(){
       if(nextGlitch<=0){this.glitch(true);nextGlitch=16+Math.random()*22;}}}
 })();
 
+/* ============================================================
+   AUDIO — plays MP3 from SOUND_URLS when a path is set,
+   otherwise falls back to synthesized sound.
+   ============================================================ */
 const AUDIO=(function(){
   let ctx=null,master,comp,noiseBuf,whiteBuf,verb=null,verbSend=null,nextAmb=10,humGain=null;
   let volMul=0.85,duckMul=1;
+  const buffers={};
+  function loadMP3s(){
+    for(const k in SOUND_URLS){
+      const url=SOUND_URLS[k];
+      if(!url)continue;
+      fetch(url).then(function(r){return r.arrayBuffer();})
+        .then(function(ab){return ctx.decodeAudioData(ab);})
+        .then(function(buf){buffers[k]=buf;})
+        .catch(function(){buffers[k]=null;});
+    }}
+  function playMP3(k,vol){
+    if(buffers[k]){
+      const s=ctx.createBufferSource();s.buffer=buffers[k];
+      const g=ctx.createGain();g.gain.value=(vol||1)*volMul*duckMul;
+      s.connect(g).connect(master);s.start();
+      return true;}
+    return false;}
   function apply(){if(master)master.gain.value=volMul*duckMul;}
   function ensure(){
     if(ctx)return;
@@ -2171,7 +2228,8 @@ const AUDIO=(function(){
     const humOsc=ctx.createOscillator();humOsc.type='sawtooth';humOsc.frequency.value=120;
     const bp=ctx.createBiquadFilter();bp.type='bandpass';bp.frequency.value=240;bp.Q.value=1.6;
     humGain=ctx.createGain();humGain.gain.value=0;
-    humOsc.connect(bp).connect(humGain).connect(master);humOsc.start();}
+    humOsc.connect(bp).connect(humGain).connect(master);humOsc.start();
+    loadMP3s();}
   function resume(){ensure();if(ctx&&ctx.state==='suspended')ctx.resume();}
   function env(g,t0,a,peak,dec){g.gain.setValueAtTime(0.0001,t0);
     g.gain.linearRampToValueAtTime(peak,t0+a);g.gain.exponentialRampToValueAtTime(0.0001,t0+a+dec);}
@@ -2201,6 +2259,7 @@ const AUDIO=(function(){
     resume:resume,
     setVol:function(v){volMul=v;apply();},
     step:function(spd,pan){
+      if(playMP3('footstep'))return;
       const run=spd>4.5,v=run?1:0.6;
       burst(0.035,run?500:340,'lowpass',0.3*v,0,0.1,noiseBuf,pan);
       tone(run?82:70,0.045,0.12*v,0,0.06,'sine',null,pan);
@@ -2223,15 +2282,32 @@ const AUDIO=(function(){
       s.connect(f).connect(g).connect(master);
       s.start(t0);s.stop(t0+0.45);},
     humLevel:function(nearLit){if(humGain)humGain.gain.value=nearLit*0.014;},
-    rifleShot:function(){
-      burst(0.003,5500,'highpass',0.7,0,0.12,whiteBuf,0);
-      burst(0.04,2900,'highpass',0.3,0.001,0.18,whiteBuf,0);
-      burst(0.09,750+Math.random()*250,'bandpass',0.45,0.003,0.32,noiseBuf,0);
-      tone(150,0.07,0.35,0.002,0.22,'triangle',85,0);
-      tone(68,0.12,0.3,0.004,0.3,'sine',46,0);
-      burst(0.28,430,'lowpass',0.1,0.045,0.5,noiseBuf,0);
-      burst(0.015,2300,'bandpass',0.13,0.06,0.1,whiteBuf,0);
-      burst(0.012,1300,'bandpass',0.1,0.11,0.08,whiteBuf,0);},
+    shot:function(kind){
+      if(playMP3(kind==='rifle'?'rifle':(kind==='shotgun'?'shotgun':'shot')))return;
+      if(kind==='rifle'){
+        burst(0.003,5500,'highpass',0.7,0,0.12,whiteBuf,0);
+        burst(0.04,2900,'highpass',0.3,0.001,0.18,whiteBuf,0);
+        burst(0.09,750+Math.random()*250,'bandpass',0.45,0.003,0.32,noiseBuf,0);
+        tone(150,0.07,0.35,0.002,0.22,'triangle',85,0);
+        tone(68,0.12,0.3,0.004,0.3,'sine',46,0);
+        burst(0.28,430,'lowpass',0.1,0.045,0.5,noiseBuf,0);
+        burst(0.015,2300,'bandpass',0.13,0.06,0.1,whiteBuf,0);
+        burst(0.012,1300,'bandpass',0.1,0.11,0.08,whiteBuf,0);
+      }else if(kind==='shotgun'){
+        burst(0.006,3600,'highpass',0.85,0,0.15,whiteBuf,0);
+        burst(0.08,1700,'highpass',0.4,0.002,0.28,whiteBuf,0);
+        burst(0.25,480,'lowpass',0.85,0.004,0.5,noiseBuf,0);
+        tone(110,0.28,0.65,0.003,0.45,'triangle',44,0);
+        tone(58,0.5,0.6,0.005,0.55,'sine',36,0);
+        burst(0.8,290,'lowpass',0.18,0.09,0.6,noiseBuf,0);
+      }else{
+        burst(0.004,5000,'highpass',0.75,0,0.12,whiteBuf,0);
+        burst(0.045,2600,'highpass',0.32,0.002,0.18,whiteBuf,0);
+        burst(0.12,620+Math.random()*200,'bandpass',0.5,0.004,0.35,noiseBuf,0);
+        tone(170,0.09,0.45,0.003,0.25,'triangle',95,0);
+        tone(78,0.16,0.4,0.005,0.35,'sine',52,0);
+        burst(0.35,400,'lowpass',0.12,0.05,0.5,noiseBuf,0);}},
+    reload:function(){playMP3('reload');},
     rifleMagOut:function(){
       burst(0.025,1500,'bandpass',0.22,0,0.12);
       burst(0.05,350,'lowpass',0.15,0.03,0.2,noiseBuf);},
@@ -2244,37 +2320,6 @@ const AUDIO=(function(){
       tone(1150,0.02,0.14,0.002,0.1,'square');
       tone(640,0.025,0.12,0.06,0.1,'square');
       burst(0.02,900,'bandpass',0.18,0.08,0.12);},
-    shot:function(){
-      burst(0.004,5000,'highpass',0.75,0,0.12,whiteBuf,0);
-      burst(0.045,2600,'highpass',0.32,0.002,0.18,whiteBuf,0);
-      burst(0.12,620+Math.random()*200,'bandpass',0.5,0.004,0.35,noiseBuf,0);
-      tone(170,0.09,0.45,0.003,0.25,'triangle',95,0);
-      tone(78,0.16,0.4,0.005,0.35,'sine',52,0);
-      burst(0.35,400,'lowpass',0.12,0.05,0.5,noiseBuf,0);
-      burst(0.018,1900,'bandpass',0.14,0.07,0.1,whiteBuf,0);
-      burst(0.02,900,'bandpass',0.12,0.115,0.1,whiteBuf,0);},
-    boom:function(){
-      burst(0.006,3600,'highpass',0.85,0,0.15,whiteBuf,0);
-      burst(0.08,1700,'highpass',0.4,0.002,0.28,whiteBuf,0);
-      burst(0.25,480,'lowpass',0.85,0.004,0.5,noiseBuf,0);
-      tone(110,0.28,0.65,0.003,0.45,'triangle',44,0);
-      tone(58,0.5,0.6,0.005,0.55,'sine',36,0);
-      burst(0.8,290,'lowpass',0.18,0.09,0.6,noiseBuf,0);
-      burst(0.025,950,'bandpass',0.16,0.14,0.12,whiteBuf,0);
-      tone(150,0.03,0.1,0.14,0.08,'square',null,0);},
-    pump:function(delay){
-      const t=delay||0;
-      burst(0.03,1300,'bandpass',0.22,t,0.15);
-      tone(220,0.03,0.12,t,0.1,'square');
-      burst(0.035,950,'bandpass',0.26,t+0.16,0.15);
-      tone(160,0.035,0.14,t+0.16,0.1,'square');},
-    shellIn:function(){
-      tone(540+Math.random()*140,0.035,0.12,0,0.08,'square');
-      burst(0.035,1400,'bandpass',0.1,0.02,0.08);},
-    dry:function(){
-      burst(0.025,2400,'highpass',0.2);
-      tone(320,0.02,0.1,0.01,0,'square');
-      burst(0.02,1600,'bandpass',0.12,0.07);},
     rlOut:function(){
       burst(0.03,1100,'bandpass',0.2,0,0.12);
       tone(480,0.04,0.1,0.01,0.1,'square');
@@ -2288,10 +2333,25 @@ const AUDIO=(function(){
       tone(950,0.02,0.12,0,0.1,'square');
       burst(0.03,800,'bandpass',0.2,0.09,0.15);
       tone(620,0.025,0.1,0.09,0.1,'square');},
+    pump:function(delay){
+      const t=delay||0;
+      burst(0.03,1300,'bandpass',0.22,t,0.15);
+      tone(220,0.03,0.12,t,0.1,'square');
+      burst(0.035,950,'bandpass',0.26,t+0.16,0.15);
+      tone(160,0.035,0.14,t+0.16,0.1,'square');},
+    shellIn:function(){
+      if(playMP3('shellIn'))return;
+      tone(540+Math.random()*140,0.035,0.12,0,0.08,'square');
+      burst(0.035,1400,'bandpass',0.1,0.02,0.08);},
+    dry:function(){
+      burst(0.025,2400,'highpass',0.2);
+      tone(320,0.02,0.1,0.01,0,'square');
+      burst(0.02,1600,'bandpass',0.12,0.07);},
     draw:function(){
       burst(0.09,520,'bandpass',0.1,0,0.1,noiseBuf);
       burst(0.03,1500,'highpass',0.1,0.1,0.08);},
     doorOpen:function(){
+      if(playMP3('doorOpen'))return;
       if(!ctx)return;
       burst(0.03,1400,'bandpass',0.18,0,0.12);
       tone(1200,0.02,0.08,0,0.08,'square');
@@ -2309,19 +2369,11 @@ const AUDIO=(function(){
       o.connect(f).connect(g);g.connect(master);
       const wg=ctx.createGain();wg.gain.value=0.3;g.connect(wg);wg.connect(verbSend);
       o.start(t0+0.05);o.stop(t0+0.9);lfo.start(t0+0.05);lfo.stop(t0+0.9);
-      const o2=ctx.createOscillator();o2.type='sine';
-      o2.frequency.setValueAtTime(1150,t0+0.12);
-      o2.frequency.linearRampToValueAtTime(900,t0+0.7);
-      const l2=ctx.createOscillator(),lg2=ctx.createGain();l2.frequency.value=7;lg2.gain.value=60;
-      l2.connect(lg2).connect(o2.frequency);
-      const g2=ctx.createGain();g2.gain.setValueAtTime(0.0001,t0);
-      g2.gain.linearRampToValueAtTime(0.012,t0+0.3);
-      g2.gain.exponentialRampToValueAtTime(0.0001,t0+0.8);
-      o2.connect(g2).connect(master);o2.start(t0+0.1);o2.stop(t0+0.85);l2.start(t0+0.1);l2.stop(t0+0.85);
       burst(0.3,260,'lowpass',0.08,0.15,0.3,noiseBuf);
       burst(0.07,180,'lowpass',0.3,0.82,0.35,noiseBuf);
       tone(90,0.09,0.2,0.82,0.3,'sine');},
     doorClose:function(){
+      if(playMP3('doorClose'))return;
       if(!ctx)return;
       const t0=ctx.currentTime;
       const o=ctx.createOscillator();o.type='sawtooth';
@@ -2340,6 +2392,7 @@ const AUDIO=(function(){
       burst(0.5,320,'lowpass',0.12,0.45,0.6,noiseBuf);
       burst(0.02,1500,'bandpass',0.2,0.42,0.15);},
     kill:function(){
+      if(playMP3('kill'))return;
       burst(0.12,520,'lowpass',0.4,0,0.3,noiseBuf);
       burst(0.18,1100,'bandpass',0.2,0.02,0.25);
       tone(130,0.1,0.3,0,0.2,'sine',70);
@@ -2360,11 +2413,13 @@ const AUDIO=(function(){
         tone(210,0.05,0.08,0.005,0.12,'sine',140);
         burst(0.02,3600,'highpass',0.05,0.03,0.08);}},
     flesh:function(){
+      if(playMP3('flesh'))return;
       tone(140,0.09,0.3,0,0.15,'sine',80);
       burst(0.1,600,'bandpass',0.24,0.005,0.2,noiseBuf);
       burst(0.06,1500,'bandpass',0.1,0.02,0.12);
       burst(0.04,2200,'highpass',0.05,0.05,0.08);},
     ping:function(){
+      if(playMP3('ping'))return;
       burst(0.03,3000,'highpass',0.15,0,0.15);
       tone(2350,0.35,0.12,0,0.35,'sine');
       tone(3520,0.28,0.06,0.005,0.3,'sine');
@@ -2373,6 +2428,7 @@ const AUDIO=(function(){
     clink:function(){tone(3100,0.1,0.04);tone(2300,0.08,0.03,0.02);},
     rattle:function(){for(let i=0;i<3;i++)burst(0.045,900,'bandpass',0.09,i*0.07);},
     radioClick:function(){burst(0.03,1800,'highpass',0.12);burst(0.02,900,'bandpass',0.08,0.05);},
+    comms:function(){playMP3('comms');},
     staticTick:function(){burst(0.06,3200,'highpass',0.04);},
     duck:function(v){duckMul=v;apply();},
     ambient:function(dt){if(!ctx)return;nextAmb-=dt;
